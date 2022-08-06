@@ -1,27 +1,54 @@
-use std::{collections::HashSet, process::exit};
+use std::{
+    collections::HashSet,
+    process::exit,
+    thread::sleep,
+    time::{Duration, Instant},
+};
 
+use clap::Parser;
 use device_query::{DeviceQuery, DeviceState, Keycode};
 
-fn main() {
-    let state = DeviceState::new();
+#[derive(Parser)]
+struct Cli {
+    /// Duration in seconds the keys must be held for in order to register.
+    /// If a queried key is not held down or released during this time,
+    /// then the program will exit with code 1.
+    #[clap(long)]
+    hold_for: Option<f64>,
+
+    keys: Vec<Keycode>,
+}
+
+fn check_keys(state: &DeviceState, to_check: &HashSet<Keycode>) -> bool {
     let keys: HashSet<_> = state.get_keys().into_iter().collect();
+    to_check.is_subset(&keys)
+}
 
-    let to_check: Result<HashSet<Keycode>, _> =
-        std::env::args().skip(1).map(|a| a.parse()).collect();
+fn main() {
+    let cli = Cli::parse();
 
-    let exit_code = match to_check {
-        Ok(to_check) => {
-            if to_check.is_subset(&keys) {
-                0
-            } else {
-                1
+    let to_check = cli.keys.into_iter().collect();
+
+    let state = DeviceState::new();
+
+    let query_successful = match cli.hold_for {
+        Some(dur) => {
+            let deadline = Instant::now() + Duration::from_secs_f64(dur);
+            loop {
+                if !check_keys(&state, &to_check) {
+                    break false;
+                }
+                if Instant::now() >= deadline {
+                    break true;
+                }
+                // Poll with about 100 Hz
+                sleep(Duration::from_millis(10));
             }
         }
-        Err(e) => {
-            eprintln!("Invalid arguments: {e}");
-            5
-        }
+        None => check_keys(&state, &to_check),
     };
+
+    let exit_code = if query_successful { 0 } else { 1 };
 
     exit(exit_code);
 }
